@@ -46,7 +46,7 @@ jobs:
           git remote add upstream https://github.com/louislam/uptime-kuma.git
           git fetch upstream "refs/tags/${{ steps.upstream.outputs.tag }}"
 
-          git merge --no-edit "${{ steps.upstream.outputs.tag }}"
+          git merge --no-edit FETCH_HEAD
 
           git tag -f -a synced-upstream -m "${{ steps.upstream.outputs.tag }}"
 
