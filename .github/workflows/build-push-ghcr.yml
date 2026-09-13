@@ -1,0 +1,49 @@
+name: Build and push patched images
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Build frontend dist (npm run build)
+        run: |
+          npm ci
+          npm run build
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute tags
+        id: tags
+        run: |
+          BRANCH="${GITHUB_REF#refs/heads/}"
+          SAFE_BRANCH=$(echo "$BRANCH" | tr '/' '-')
+          SHORT_SHA=$(echo "$GITHUB_SHA" | cut -c1-7)
+          echo "branch_tag=${SAFE_BRANCH}" >> "$GITHUB_OUTPUT"
+          echo "commit_tag=${SAFE_BRANCH}_${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/dockerfile
+          target: release
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/uptime-kuma-ntfy-patch:${{ steps.tags.outputs.branch_tag }}
+            ghcr.io/${{ github.repository_owner }}/uptime-kuma-ntfy-patch:${{ steps.tags.outputs.commit_tag }}
