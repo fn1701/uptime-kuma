@@ -1,0 +1,72 @@
+name: Sync upstream release
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: master
+
+      - name: Get latest upstream stable release tag
+        id: upstream
+        run: |
+          TAG=$(gh api repos/louislam/uptime-kuma/releases/latest -q .tag_name)
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check last synced tag
+        id: synced
+        run: |
+          git fetch origin 'refs/tags/synced-upstream' || true
+          if git rev-parse -q --verify refs/tags/synced-upstream >/dev/null; then
+            LAST=$(git tag -l --format='%(contents)' synced-upstream)
+          else
+            LAST=""
+          fi
+          echo "last=${LAST}" >> "$GITHUB_OUTPUT"
+
+      # Rebase (not merge) this fork's commits onto the new upstream tag, so
+      # master stays a clean, linear "upstream release + ntfy patch" history
+      # that's ready to open a PR from at any time. Unlike a merge, a rebase
+      # can conflict; if it does, this step fails the job instead of pushing
+      # a broken result, so production never silently breaks.
+      - name: Rebase onto new release
+        id: rebase
+        if: steps.upstream.outputs.tag != steps.synced.outputs.last && steps.synced.outputs.last != ''
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git remote add upstream https://github.com/louislam/uptime-kuma.git
+          git fetch upstream \
+            "refs/tags/${{ steps.synced.outputs.last }}:refs/tags/${{ steps.synced.outputs.last }}" \
+            "refs/tags/${{ steps.upstream.outputs.tag }}:refs/tags/${{ steps.upstream.outputs.tag }}"
+
+          git rebase --onto "${{ steps.upstream.outputs.tag }}" "${{ steps.synced.outputs.last }}" master
+
+          git tag -f -a synced-upstream -m "${{ steps.upstream.outputs.tag }}"
+
+          git push --force-with-lease origin master
+          git push origin refs/tags/synced-upstream --force
+
+          echo "rebased=true" >> "$GITHUB_OUTPUT"
+
+      # First sync ever (no synced-upstream tag yet): just record the tag
+      # master is already based on, don't rebase onto itself.
+      - name: Record initial synced tag
+        if: steps.synced.outputs.last == ''
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -f -a synced-upstream -m "${{ steps.upstream.outputs.tag }}"
+          git push origin refs/tags/synced-upstream --force
