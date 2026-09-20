@@ -1,7 +1,10 @@
 name: Nightly Release
 
 on:
-  # push instead of upstream's schedule: this fork builds on every push, not nightly
+  # push instead of upstream's schedule: this fork builds on every push (branch
+  # or tag), not nightly. A plain `push:` with no filter already covers tag
+  # pushes (e.g. version tags like "2.5.5" synced in from upstream releases),
+  # so the version-tag build below is handled in "Compute tags", not here.
   push:
   workflow_dispatch: # Allow manual trigger
 
@@ -61,17 +64,40 @@ jobs:
       - name: Compute tags
         id: tags
         run: |
-          BRANCH="${GITHUB_REF#refs/heads/}"
-          SAFE_BRANCH=$(echo "$BRANCH" | tr '/' '-')
           SHORT_SHA=$(echo "$GITHUB_SHA" | cut -c1-7)
-          echo "branch_tag=${SAFE_BRANCH}" >> "$GITHUB_OUTPUT"
-          echo "commit_tag=${SAFE_BRANCH}_${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+
+          TAG_NAME="${GITHUB_REF#refs/tags/}"
+
+          # Only treat semver-looking tags (e.g. "2.5.5", "2.1.0-beta.2") as
+          # version releases. Excludes the "synced-upstream" bookkeeping tag
+          # that sync-upstream-release.yml force-pushes, which isn't a release.
+          if [[ "$GITHUB_REF" == refs/tags/* && "$TAG_NAME" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-.+)?$ ]]; then
+            # Version tag push (e.g. a tag like "2.5.5" synced in from an
+            # upstream release): use the tag name itself for branch_tag/commit_tag
+            # (kept for ghcr-patch.mjs's required inputs) and also surface it
+            # as version_tag so the image gets published under that version.
+            SAFE_TAG=$(echo "$TAG_NAME" | tr '/' '-')
+            echo "branch_tag=${SAFE_TAG}" >> "$GITHUB_OUTPUT"
+            echo "commit_tag=${SAFE_TAG}_${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+            echo "version_tag=${SAFE_TAG}" >> "$GITHUB_OUTPUT"
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            # Some other tag (e.g. synced-upstream): nothing to build, skip.
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            BRANCH="${GITHUB_REF#refs/heads/}"
+            SAFE_BRANCH=$(echo "$BRANCH" | tr '/' '-')
+            echo "branch_tag=${SAFE_BRANCH}" >> "$GITHUB_OUTPUT"
+            echo "commit_tag=${SAFE_BRANCH}_${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Run release-nightly
+        if: steps.tags.outputs.skip != 'true'
         # Fork: extra/release/ghcr-patch.mjs builds the "release" target (not
-        # nightly/nightly-rootless) tagged by branch/commit, pushed to GHCR only
+        # nightly/nightly-rootless) tagged by branch/commit (and, on a version
+        # tag push, the version too), pushed to GHCR only
         env:
           RELEASE_REPO_NAMES: ghcr.io/${{ github.repository_owner }}/uptime-kuma-ntfy-patch
           RELEASE_BRANCH_TAG: ${{ steps.tags.outputs.branch_tag }}
           RELEASE_COMMIT_TAG: ${{ steps.tags.outputs.commit_tag }}
+          RELEASE_VERSION_TAG: ${{ steps.tags.outputs.version_tag }}
         run: node ./extra/release/ghcr-patch.mjs

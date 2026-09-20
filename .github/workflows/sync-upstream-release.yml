@@ -59,6 +59,11 @@ jobs:
           git push --force-with-lease origin master
           git push origin refs/tags/synced-upstream --force
 
+          # Publish the upstream version tag itself too (already fetched above),
+          # so build-push-ghcr.yml's push trigger fires and builds/pushes a
+          # matching versioned Docker image.
+          git push origin "refs/tags/${{ steps.upstream.outputs.tag }}"
+
           echo "rebased=true" >> "$GITHUB_OUTPUT"
 
       # First sync ever (no synced-upstream tag yet): just record the tag
