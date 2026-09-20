@@ -2,7 +2,10 @@ name: Sync upstream release
 
 on:
   schedule:
-    - cron: "0 */6 * * *"
+    # Weekly instead of every 6h: upstream releases aren't frequent enough to
+    # need faster checking, and this cuts down on repeated failure emails
+    # while the GITHUB_TOKEN workflow-file push restriction is unresolved.
+    - cron: "0 3 * * 1" # Mondays at 03:00 UTC
   workflow_dispatch:
 
 jobs:
@@ -58,6 +61,11 @@ jobs:
 
           git push --force-with-lease origin master
           git push origin refs/tags/synced-upstream --force
+
+          # Publish the upstream version tag itself too (already fetched above),
+          # so build-push-ghcr.yml's push trigger fires and builds/pushes a
+          # matching versioned Docker image.
+          git push origin "refs/tags/${{ steps.upstream.outputs.tag }}"
 
           echo "rebased=true" >> "$GITHUB_OUTPUT"
 
